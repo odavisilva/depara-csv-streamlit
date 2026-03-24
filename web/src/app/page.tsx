@@ -1,7 +1,7 @@
 "use client";
 
 import Papa from "papaparse";
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, useMemo, useState } from "react";
 import { DiffTable } from "@/components/DiffTable";
 import { KpiCard } from "@/components/KpiCard";
 import { buildSummary, compareRows, DiffRow, DiffStatus, normalizeRows, toCsv } from "@/lib/depara";
@@ -33,6 +33,8 @@ function parseCsv(file: File): Promise<string[][]> {
 export default function Page() {
   const [fileA, setFileA] = useState<File | null>(null);
   const [fileB, setFileB] = useState<File | null>(null);
+  const [draggingA, setDraggingA] = useState(false);
+  const [draggingB, setDraggingB] = useState(false);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [diffs, setDiffs] = useState<DiffRow[]>([]);
@@ -76,6 +78,25 @@ export default function Page() {
     setFileB(event.target.files?.[0] ?? null);
   }
 
+  function onDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function onDropA(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDraggingA(false);
+    const droppedFile = event.dataTransfer.files?.[0] ?? null;
+    setFileA(droppedFile);
+  }
+
+  function onDropB(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDraggingB(false);
+    const droppedFile = event.dataTransfer.files?.[0] ?? null;
+    setFileB(droppedFile);
+  }
+
   const csvOutput = useMemo(() => toCsv(filteredRows), [filteredRows]);
 
   return (
@@ -86,12 +107,40 @@ export default function Page() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-2">
-        <label className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label
+          className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
+            draggingA ? "border-slate-700 ring-2 ring-slate-300" : "border-slate-200"
+          }`}
+        >
           <span className="mb-2 block text-sm font-medium text-slate-600">Arquivo A (.csv)</span>
+          <div
+            onDragOver={onDragOver}
+            onDragEnter={() => setDraggingA(true)}
+            onDragLeave={() => setDraggingA(false)}
+            onDrop={onDropA}
+            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-600"
+          >
+            Arraste e solte o CSV aqui
+          </div>
+          {fileA && <p className="mb-2 text-xs text-slate-500">Selecionado: {fileA.name}</p>}
           <input type="file" accept=".csv" onChange={onSelectA} className="block w-full text-sm" />
         </label>
-        <label className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label
+          className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
+            draggingB ? "border-slate-700 ring-2 ring-slate-300" : "border-slate-200"
+          }`}
+        >
           <span className="mb-2 block text-sm font-medium text-slate-600">Arquivo B (.csv)</span>
+          <div
+            onDragOver={onDragOver}
+            onDragEnter={() => setDraggingB(true)}
+            onDragLeave={() => setDraggingB(false)}
+            onDrop={onDropB}
+            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-600"
+          >
+            Arraste e solte o CSV aqui
+          </div>
+          {fileB && <p className="mb-2 text-xs text-slate-500">Selecionado: {fileB.name}</p>}
           <input type="file" accept=".csv" onChange={onSelectB} className="block w-full text-sm" />
         </label>
       </section>
