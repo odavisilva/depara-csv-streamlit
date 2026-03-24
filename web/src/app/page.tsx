@@ -6,7 +6,7 @@ import { DiffTable } from "@/components/DiffTable";
 import { KpiCard } from "@/components/KpiCard";
 import { buildSummary, compareRows, DiffRow, DiffStatus, normalizeRows, toCsv } from "@/lib/depara";
 
-const DEFAULT_FILTERS: DiffStatus[] = ["diferente", "somente_arquivo_a", "somente_arquivo_b"];
+const DEFAULT_FILTERS: DiffStatus[] = ["diferente", "somente_arquivo_a", "somente_arquivo_b", "igual"];
 
 function hasCsvSuffix(file: File | null): boolean {
   if (!file) return false;
@@ -46,6 +46,10 @@ export default function Page() {
     if (!filters.length) return [];
     return diffs.filter((diff) => filters.includes(diff.status));
   }, [diffs, filters]);
+  const errorRows = useMemo(
+    () => diffs.filter((row) => row.status !== "igual"),
+    [diffs]
+  );
 
   async function handleCompare() {
     setError("");
@@ -197,8 +201,25 @@ export default function Page() {
         </div>
       </section>
 
+      {!!errorRows.length && (
+        <section className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4">
+          <h2 className="mb-3 text-lg font-semibold text-red-800">Setas para erros</h2>
+          <div className="flex flex-wrap gap-2">
+            {errorRows.map((row) => (
+              <a
+                key={`erro-${row.linha}-${row.status}`}
+                href={`#linha-${row.linha}`}
+                className="rounded-full border border-red-300 bg-white px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-100"
+              >
+                {`\u2192 Linha ${row.linha} (${row.status})`}
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="mt-6">
-        <h2 className="mb-3 text-lg font-semibold text-slate-800">Detalhamento</h2>
+        <h2 className="mb-3 text-lg font-semibold text-slate-800">Detalhamento completo (todos os dados)</h2>
         <DiffTable rows={filteredRows} />
       </section>
     </main>

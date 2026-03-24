@@ -5,10 +5,17 @@ type DiffTableProps = {
 };
 
 const statusClassMap: Record<DiffRow["status"], string> = {
-  igual: "bg-emerald-50 text-emerald-700",
-  diferente: "bg-amber-50 text-amber-700",
-  somente_arquivo_a: "bg-blue-50 text-blue-700",
-  somente_arquivo_b: "bg-violet-50 text-violet-700"
+  igual: "bg-emerald-100 text-emerald-800",
+  diferente: "bg-red-100 text-red-800",
+  somente_arquivo_a: "bg-red-100 text-red-800",
+  somente_arquivo_b: "bg-red-100 text-red-800"
+};
+
+const rowClassMap: Record<DiffRow["status"], string> = {
+  igual: "bg-emerald-50",
+  diferente: "bg-red-50",
+  somente_arquivo_a: "bg-red-50",
+  somente_arquivo_b: "bg-red-50"
 };
 
 export function DiffTable({ rows }: DiffTableProps) {
@@ -29,11 +36,15 @@ export function DiffTable({ rows }: DiffTableProps) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={`${row.linha}-${row.status}`} className="border-t border-slate-100">
+            <tr
+              id={`linha-${row.linha}`}
+              key={`${row.linha}-${row.status}`}
+              className={`border-t border-slate-100 ${rowClassMap[row.status]}`}
+            >
               <td className="px-3 py-2 align-top text-slate-700">{row.linha}</td>
               <td className="px-3 py-2 align-top">
                 <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusClassMap[row.status]}`}>
-                  {row.status}
+                  {row.status !== "igual" ? `\u2192 ${row.status}` : row.status}
                 </span>
               </td>
               <td className="max-w-[340px] px-3 py-2 align-top text-slate-700">{row.conteudoA}</td>
