@@ -1,6 +1,7 @@
 "use client";
 
 import Papa from "papaparse";
+import * as XLSX from "xlsx";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
 import { DiffTable } from "@/components/DiffTable";
 import { KpiCard } from "@/components/KpiCard";
@@ -9,9 +10,17 @@ import { buildSummary, compareRows, DiffRow, DiffStatus, normalizeRows, toCsv } 
 const DEFAULT_FILTERS: DiffStatus[] = ["diferente", "somente_arquivo_a", "somente_arquivo_b", "igual"];
 type Theme = "light" | "dark";
 
-function hasCsvSuffix(file: File | null): boolean {
+function hasSupportedSuffix(file: File | null): boolean {
   if (!file) return false;
-  return file.name.toLowerCase().endsWith(".csv");
+  const fileName = file.name.toLowerCase();
+  return fileName.endsWith(".csv") || fileName.endsWith(".xlsx");
+}
+
+function getFileSuffix(file: File): "csv" | "xlsx" | null {
+  const fileName = file.name.toLowerCase();
+  if (fileName.endsWith(".csv")) return "csv";
+  if (fileName.endsWith(".xlsx")) return "xlsx";
+  return null;
 }
 
 function parseCsv(file: File): Promise<string[][]> {
@@ -29,6 +38,29 @@ function parseCsv(file: File): Promise<string[][]> {
       error: (error) => reject(error)
     });
   });
+}
+
+async function parseXlsx(file: File): Promise<string[][]> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    return [];
+  }
+  const firstSheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(firstSheet, {
+    header: 1,
+    raw: false,
+    defval: ""
+  });
+  return rows.map((row) => row.map((cell) => String(cell ?? "")));
+}
+
+async function parseTableFile(file: File): Promise<string[][]> {
+  const suffix = getFileSuffix(file);
+  if (suffix === "csv") return parseCsv(file);
+  if (suffix === "xlsx") return parseXlsx(file);
+  throw new Error("Formato nao suportado. Use .csv ou .xlsx");
 }
 
 export default function Page() {
@@ -76,14 +108,14 @@ export default function Page() {
     setError("");
     setDiffs([]);
 
-    if (!hasCsvSuffix(fileA) || !hasCsvSuffix(fileB)) {
-      setError("Envie dois arquivos com sufixo .csv.");
+    if (!hasSupportedSuffix(fileA) || !hasSupportedSuffix(fileB)) {
+      setError("Envie dois arquivos nos formatos .csv ou .xlsx.");
       return;
     }
 
     try {
       setLoading(true);
-      const [rowsA, rowsB] = await Promise.all([parseCsv(fileA as File), parseCsv(fileB as File)]);
+      const [rowsA, rowsB] = await Promise.all([parseTableFile(fileA as File), parseTableFile(fileB as File)]);
       const normalizedA = normalizeRows(rowsA);
       const normalizedB = normalizeRows(rowsB);
       setDiffs(compareRows(normalizedA, normalizedB));
@@ -149,7 +181,7 @@ export default function Page() {
             draggingA ? "border-indigo-400 ring-2 ring-indigo-200 dark:ring-indigo-900/50" : ""
           }`}
         >
-          <span className="mb-2 block text-sm font-medium muted-text">Arquivo A (.csv)</span>
+          <span className="mb-2 block text-sm font-medium muted-text">Arquivo A (.csv ou .xlsx)</span>
           <div
             onDragOver={onDragOver}
             onDragEnter={() => setDraggingA(true)}
@@ -157,17 +189,17 @@ export default function Page() {
             onDrop={onDropA}
             className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-3 py-5 text-center text-sm muted-text dark:border-slate-700 dark:bg-slate-900/50"
           >
-            Arraste e solte o CSV aqui
+            Arraste e solte o arquivo aqui
           </div>
           {fileA && <p className="mb-2 text-xs muted-text">Selecionado: {fileA.name}</p>}
-          <input type="file" accept=".csv" onChange={onSelectA} className="block w-full text-sm" />
+          <input type="file" accept=".csv,.xlsx" onChange={onSelectA} className="block w-full text-sm" />
         </label>
         <label
           className={`surface-card rounded-2xl p-4 transition ${
             draggingB ? "border-indigo-400 ring-2 ring-indigo-200 dark:ring-indigo-900/50" : ""
           }`}
         >
-          <span className="mb-2 block text-sm font-medium muted-text">Arquivo B (.csv)</span>
+          <span className="mb-2 block text-sm font-medium muted-text">Arquivo B (.csv ou .xlsx)</span>
           <div
             onDragOver={onDragOver}
             onDragEnter={() => setDraggingB(true)}
@@ -175,10 +207,10 @@ export default function Page() {
             onDrop={onDropB}
             className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-3 py-5 text-center text-sm muted-text dark:border-slate-700 dark:bg-slate-900/50"
           >
-            Arraste e solte o CSV aqui
+            Arraste e solte o arquivo aqui
           </div>
           {fileB && <p className="mb-2 text-xs muted-text">Selecionado: {fileB.name}</p>}
-          <input type="file" accept=".csv" onChange={onSelectB} className="block w-full text-sm" />
+          <input type="file" accept=".csv,.xlsx" onChange={onSelectB} className="block w-full text-sm" />
         </label>
       </section>
 
