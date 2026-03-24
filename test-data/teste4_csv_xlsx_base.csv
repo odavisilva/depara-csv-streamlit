@@ -1,0 +1,5 @@
+id,produto,quantidade,preco,status
+101,Teclado,5,120.50,ativo
+102,Mouse,10,59.90,ativo
+103,Monitor,2,899.00,inativo
+104,Headset,7,210.00,ativo
