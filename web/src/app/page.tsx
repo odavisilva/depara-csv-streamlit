@@ -1,12 +1,13 @@
 "use client";
 
 import Papa from "papaparse";
-import { ChangeEvent, DragEvent, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
 import { DiffTable } from "@/components/DiffTable";
 import { KpiCard } from "@/components/KpiCard";
 import { buildSummary, compareRows, DiffRow, DiffStatus, normalizeRows, toCsv } from "@/lib/depara";
 
 const DEFAULT_FILTERS: DiffStatus[] = ["diferente", "somente_arquivo_a", "somente_arquivo_b", "igual"];
+type Theme = "light" | "dark";
 
 function hasCsvSuffix(file: File | null): boolean {
   if (!file) return false;
@@ -35,6 +36,8 @@ export default function Page() {
   const [fileB, setFileB] = useState<File | null>(null);
   const [draggingA, setDraggingA] = useState(false);
   const [draggingB, setDraggingB] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [theme, setTheme] = useState<Theme>("light");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [diffs, setDiffs] = useState<DiffRow[]>([]);
@@ -50,6 +53,24 @@ export default function Page() {
     () => diffs.filter((row) => row.status !== "igual"),
     [diffs]
   );
+  const csvOutput = useMemo(() => toCsv(filteredRows), [filteredRows]);
+
+  useEffect(() => {
+    const storedTheme = window.localStorage.getItem("theme") as Theme | null;
+    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initialTheme: Theme = storedTheme ?? (systemPrefersDark ? "dark" : "light");
+
+    setTheme(initialTheme);
+    document.documentElement.classList.toggle("dark", initialTheme === "dark");
+    setMounted(true);
+  }, []);
+
+  function toggleTheme() {
+    const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    window.localStorage.setItem("theme", nextTheme);
+    document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  }
 
   async function handleCompare() {
     setError("");
@@ -101,50 +122,62 @@ export default function Page() {
     setFileB(droppedFile);
   }
 
-  const csvOutput = useMemo(() => toCsv(filteredRows), [filteredRows]);
-
   return (
-    <main className="mx-auto min-h-screen w-full max-w-6xl px-4 py-10">
-      <div className="mb-8 rounded-3xl bg-gradient-to-r from-slate-900 to-slate-700 p-8 text-white shadow-lg">
-        <h1 className="text-3xl font-bold">Depara CSV</h1>
-        <p className="mt-2 text-slate-200">Compare dois CSVs e visualize as divergencias com clareza.</p>
+    <main className="mx-auto min-h-screen w-full max-w-7xl px-4 py-10">
+      <div className="surface-card mb-8 rounded-3xl bg-gradient-to-r from-indigo-500/20 via-sky-500/15 to-violet-500/20 p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="mb-2 inline-block rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-semibold text-indigo-700 dark:text-indigo-200">
+              Magic UI Style
+            </p>
+            <h1 className="text-3xl font-bold tracking-tight">Depara CSV</h1>
+            <p className="mt-2 muted-text">Compare dois CSVs e visualize divergencias com destaque imediato.</p>
+          </div>
+          <button
+            onClick={toggleTheme}
+            disabled={!mounted}
+            className="rounded-xl border border-slate-300 bg-white/80 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-60"
+          >
+            {theme === "dark" ? "Tema claro" : "Tema escuro"}
+          </button>
+        </div>
       </div>
 
       <section className="grid gap-4 md:grid-cols-2">
         <label
-          className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
-            draggingA ? "border-slate-700 ring-2 ring-slate-300" : "border-slate-200"
+          className={`surface-card rounded-2xl p-4 transition ${
+            draggingA ? "border-indigo-400 ring-2 ring-indigo-200 dark:ring-indigo-900/50" : ""
           }`}
         >
-          <span className="mb-2 block text-sm font-medium text-slate-600">Arquivo A (.csv)</span>
+          <span className="mb-2 block text-sm font-medium muted-text">Arquivo A (.csv)</span>
           <div
             onDragOver={onDragOver}
             onDragEnter={() => setDraggingA(true)}
             onDragLeave={() => setDraggingA(false)}
             onDrop={onDropA}
-            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-600"
+            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-3 py-5 text-center text-sm muted-text dark:border-slate-700 dark:bg-slate-900/50"
           >
             Arraste e solte o CSV aqui
           </div>
-          {fileA && <p className="mb-2 text-xs text-slate-500">Selecionado: {fileA.name}</p>}
+          {fileA && <p className="mb-2 text-xs muted-text">Selecionado: {fileA.name}</p>}
           <input type="file" accept=".csv" onChange={onSelectA} className="block w-full text-sm" />
         </label>
         <label
-          className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
-            draggingB ? "border-slate-700 ring-2 ring-slate-300" : "border-slate-200"
+          className={`surface-card rounded-2xl p-4 transition ${
+            draggingB ? "border-indigo-400 ring-2 ring-indigo-200 dark:ring-indigo-900/50" : ""
           }`}
         >
-          <span className="mb-2 block text-sm font-medium text-slate-600">Arquivo B (.csv)</span>
+          <span className="mb-2 block text-sm font-medium muted-text">Arquivo B (.csv)</span>
           <div
             onDragOver={onDragOver}
             onDragEnter={() => setDraggingB(true)}
             onDragLeave={() => setDraggingB(false)}
             onDrop={onDropB}
-            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-5 text-center text-sm text-slate-600"
+            className="mb-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-3 py-5 text-center text-sm muted-text dark:border-slate-700 dark:bg-slate-900/50"
           >
             Arraste e solte o CSV aqui
           </div>
-          {fileB && <p className="mb-2 text-xs text-slate-500">Selecionado: {fileB.name}</p>}
+          {fileB && <p className="mb-2 text-xs muted-text">Selecionado: {fileB.name}</p>}
           <input type="file" accept=".csv" onChange={onSelectB} className="block w-full text-sm" />
         </label>
       </section>
@@ -153,7 +186,7 @@ export default function Page() {
         <button
           onClick={handleCompare}
           disabled={loading}
-          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Comparando..." : "Comparar"}
         </button>
@@ -161,24 +194,28 @@ export default function Page() {
         <a
           href={`data:text/csv;charset=utf-8,${encodeURIComponent(csvOutput)}`}
           download="depara_diferencas.csv"
-          className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+          className="rounded-xl border border-slate-300 bg-white/85 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           Exportar CSV filtrado
         </a>
       </div>
 
-      {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {error && (
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/50 dark:text-red-200">
+          {error}
+        </p>
+      )}
 
       <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <KpiCard title="Total comparado" value={summary.total} />
-        <KpiCard title="Iguais" value={summary.iguais} />
-        <KpiCard title="Diferentes" value={summary.diferentes} />
-        <KpiCard title="Somente A" value={summary.somenteA} />
-        <KpiCard title="% Divergencia" value={`${summary.percentualDivergencia}%`} />
+        <KpiCard title="Total comparado" value={summary.total} tone="default" />
+        <KpiCard title="Iguais" value={summary.iguais} tone="ok" />
+        <KpiCard title="Diferentes" value={summary.diferentes} tone="warn" />
+        <KpiCard title="Somente A" value={summary.somenteA} tone="warn" />
+        <KpiCard title="% Divergencia" value={`${summary.percentualDivergencia}%`} tone="default" />
       </section>
 
-      <section className="mt-8">
-        <h2 className="mb-3 text-lg font-semibold text-slate-800">Filtros</h2>
+      <section className="surface-card mt-8 rounded-2xl p-5">
+        <h2 className="mb-3 text-lg font-semibold">Filtros</h2>
         <div className="flex flex-wrap gap-2">
           {(["diferente", "somente_arquivo_a", "somente_arquivo_b", "igual"] as DiffStatus[]).map((status) => {
             const selected = filters.includes(status);
@@ -191,7 +228,9 @@ export default function Page() {
                   )
                 }
                 className={`rounded-full px-3 py-1 text-sm transition ${
-                  selected ? "bg-slate-900 text-white" : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                  selected
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                 }`}
               >
                 {status}
@@ -202,14 +241,14 @@ export default function Page() {
       </section>
 
       {!!errorRows.length && (
-        <section className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4">
-          <h2 className="mb-3 text-lg font-semibold text-red-800">Setas para erros</h2>
+        <section className="surface-card mt-6 rounded-2xl border-red-300/70 bg-red-50/70 p-4 dark:border-red-900 dark:bg-red-950/20">
+          <h2 className="mb-3 text-lg font-semibold text-red-800 dark:text-red-200">Setas para erros</h2>
           <div className="flex flex-wrap gap-2">
             {errorRows.map((row) => (
               <a
                 key={`erro-${row.linha}-${row.status}`}
                 href={`#linha-${row.linha}`}
-                className="rounded-full border border-red-300 bg-white px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-100"
+                className="rounded-full border border-red-300 bg-white px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
               >
                 {`\u2192 Linha ${row.linha} (${row.status})`}
               </a>

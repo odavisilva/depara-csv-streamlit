@@ -4,8 +4,38 @@
 
 :root {
   color-scheme: light;
+  --bg: #f8fafc;
+  --bg-muted: #f1f5f9;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --accent: #6366f1;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900;
+  background: radial-gradient(circle at top, #e2e8f0 0%, var(--bg) 45%);
+  color: var(--text);
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #020617;
+  --bg-muted: #0f172a;
+  --surface: #0b1220;
+  --border: #1e293b;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --accent: #818cf8;
+}
+
+.surface-card {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px -20px rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(6px);
+}
+
+.muted-text {
+  color: var(--text-muted);
 }
