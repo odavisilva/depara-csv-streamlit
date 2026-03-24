@@ -1,0 +1,5 @@
+codigo,cliente,cidade,valor,pagamento
+9001,Loja Azul,Sao Paulo,199.90,cartao
+9002,Loja Verde,Campinas,89.50,pix
+9003,Loja Laranja,Santos,560.00,boleto
+9004,Loja Branca,Ribeirao Preto,42.75,dinheiro

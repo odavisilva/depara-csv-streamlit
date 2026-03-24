@@ -1,0 +1,5 @@
+id,nome,departamento,salario,status
+10,Marcos,Financeiro,4500,ativo
+11,Julia,Operacoes,3800,ativo
+12,Rafael,TI,5200,inativo
+13,Patricia,Comercial,4100,ativo
