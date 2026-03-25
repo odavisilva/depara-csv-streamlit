@@ -5,7 +5,14 @@ import * as XLSX from "xlsx";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useState } from "react";
 import { DiffTable } from "@/components/DiffTable";
 import { KpiCard } from "@/components/KpiCard";
-import { buildSummary, compareRows, DiffRow, DiffStatus, normalizeRows, toCsv } from "@/lib/depara";
+import {
+  buildSummary,
+  compareTablesByFields,
+  DiffRow,
+  DiffStatus,
+  tableFromMatrix,
+  toCsv
+} from "@/lib/depara";
 
 const DEFAULT_FILTERS: DiffStatus[] = ["diferente", "somente_arquivo_a", "somente_arquivo_b", "igual"];
 type Theme = "light" | "dark";
@@ -23,9 +30,25 @@ function getFileSuffix(file: File): "csv" | "xlsx" | null {
   return null;
 }
 
-function parseCsv(file: File): Promise<string[][]> {
+type WorkbookLike = { sheets: Map<string, string[][]> };
+
+function basenameWithoutExt(fileName: string): string {
+  return fileName.replace(/\.[^/.]+$/, "");
+}
+
+function decodeCsvText(bytes: ArrayBuffer): string {
+  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  const looksBroken = utf8.includes("\uFFFD") || /Ã.|Â.|�/.test(utf8);
+  if (!looksBroken) return utf8;
+  // fallback comum para arquivos gerados no Windows/ERP
+  return new TextDecoder("windows-1252", { fatal: false }).decode(bytes);
+}
+
+async function parseCsvRobust(file: File): Promise<string[][]> {
+  const buffer = await file.arrayBuffer();
+  const text = decodeCsvText(buffer);
   return new Promise((resolve, reject) => {
-    Papa.parse<string[]>(file, {
+    Papa.parse<string[]>(text, {
       delimiter: "",
       skipEmptyLines: false,
       complete: (results) => {
@@ -35,31 +58,34 @@ function parseCsv(file: File): Promise<string[][]> {
         }
         resolve((results.data as string[][]) ?? []);
       },
-      error: (error) => reject(error)
+      error: (error: unknown) => reject(error)
     });
   });
 }
 
-async function parseXlsx(file: File): Promise<string[][]> {
+async function parseXlsxAllSheets(file: File): Promise<WorkbookLike> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) {
-    return [];
+  const sheets = new Map<string, string[][]>();
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: ""
+    });
+    sheets.set(sheetName, rows.map((row) => row.map((cell) => String(cell ?? ""))));
   }
-  const firstSheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(firstSheet, {
-    header: 1,
-    raw: false,
-    defval: ""
-  });
-  return rows.map((row) => row.map((cell) => String(cell ?? "")));
+  return { sheets };
 }
 
-async function parseTableFile(file: File): Promise<string[][]> {
+async function parseFileToWorkbookLike(file: File): Promise<WorkbookLike> {
   const suffix = getFileSuffix(file);
-  if (suffix === "csv") return parseCsv(file);
-  if (suffix === "xlsx") return parseXlsx(file);
+  if (suffix === "csv") {
+    const matrix = await parseCsvRobust(file);
+    return { sheets: new Map([[basenameWithoutExt(file.name), matrix]]) };
+  }
+  if (suffix === "xlsx") return parseXlsxAllSheets(file);
   throw new Error("Formato nao suportado. Use .csv ou .xlsx");
 }
 
@@ -74,6 +100,14 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [diffs, setDiffs] = useState<DiffRow[]>([]);
   const [filters, setFilters] = useState<DiffStatus[]>(DEFAULT_FILTERS);
+  const [sheetsA, setSheetsA] = useState<string[]>([]);
+  const [sheetsB, setSheetsB] = useState<string[]>([]);
+  const [sheetSelected, setSheetSelected] = useState<string>("");
+  const [columnsA, setColumnsA] = useState<string[]>([]);
+  const [columnsB, setColumnsB] = useState<string[]>([]);
+  const [columnsOnlyA, setColumnsOnlyA] = useState<string[]>([]);
+  const [columnsOnlyB, setColumnsOnlyB] = useState<string[]>([]);
+  const [keyColumns, setKeyColumns] = useState<string[]>([]);
 
   const summary = useMemo(() => buildSummary(diffs), [diffs]);
 
@@ -107,6 +141,12 @@ export default function Page() {
   async function handleCompare() {
     setError("");
     setDiffs([]);
+    setSheetsA([]);
+    setSheetsB([]);
+    setColumnsA([]);
+    setColumnsB([]);
+    setColumnsOnlyA([]);
+    setColumnsOnlyB([]);
 
     if (!hasSupportedSuffix(fileA) || !hasSupportedSuffix(fileB)) {
       setError("Envie dois arquivos nos formatos .csv ou .xlsx.");
@@ -115,10 +155,38 @@ export default function Page() {
 
     try {
       setLoading(true);
-      const [rowsA, rowsB] = await Promise.all([parseTableFile(fileA as File), parseTableFile(fileB as File)]);
-      const normalizedA = normalizeRows(rowsA);
-      const normalizedB = normalizeRows(rowsB);
-      setDiffs(compareRows(normalizedA, normalizedB));
+      const [wbA, wbB] = await Promise.all([
+        parseFileToWorkbookLike(fileA as File),
+        parseFileToWorkbookLike(fileB as File)
+      ]);
+
+      const listA = Array.from(wbA.sheets.keys());
+      const listB = Array.from(wbB.sheets.keys());
+      setSheetsA(listA);
+      setSheetsB(listB);
+
+      // regra: XLSX vs XLSX -> parear por nome; caso não haja interseção, escolher a 1ª de cada
+      const intersection = listA.filter((name) => listB.includes(name));
+      const defaultSheet = intersection[0] ?? listA[0] ?? "";
+      setSheetSelected(defaultSheet);
+
+      const matrixA = wbA.sheets.get(defaultSheet) ?? wbA.sheets.get(listA[0] ?? "") ?? [];
+      const matrixB = wbB.sheets.get(defaultSheet) ?? wbB.sheets.get(listB[0] ?? "") ?? [];
+
+      const tableA = tableFromMatrix(matrixA);
+      const tableB = tableFromMatrix(matrixB);
+      setColumnsA(tableA.header);
+      setColumnsB(tableB.header);
+
+      // sugestão simples de chave (colunas com "nr_" ou "id" ou "codigo")
+      const candidates = tableA.header.filter((h) => /(^nr_|id$|codigo|seq)/i.test(h));
+      const initialKey = candidates.slice(0, 3);
+      setKeyColumns(initialKey);
+
+      const compared = compareTablesByFields(tableA, tableB, initialKey);
+      setColumnsOnlyA(compared.columnsOnlyA);
+      setColumnsOnlyB(compared.columnsOnlyB);
+      setDiffs(compared.diffs);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao comparar os CSVs.";
       setError(message);
@@ -213,6 +281,52 @@ export default function Page() {
           <input type="file" accept=".csv,.xlsx" onChange={onSelectB} className="block w-full text-sm" />
         </label>
       </section>
+
+      {(sheetsA.length > 1 || sheetsB.length > 1) && (
+        <section className="surface-card mt-6 rounded-2xl p-5">
+          <h2 className="mb-3 text-lg font-semibold">Abas (XLSX)</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <p className="mb-1 text-sm font-medium muted-text">Abas no arquivo A</p>
+              <p className="text-sm muted-text">{sheetsA.join(", ") || "-"}</p>
+            </div>
+            <div>
+              <p className="mb-1 text-sm font-medium muted-text">Abas no arquivo B</p>
+              <p className="text-sm muted-text">{sheetsB.join(", ") || "-"}</p>
+            </div>
+          </div>
+          {!!sheetSelected && (
+            <p className="mt-3 text-sm muted-text">
+              Comparando aba: <span className="font-semibold">{sheetSelected}</span> (por nome quando existir nos dois)
+            </p>
+          )}
+        </section>
+      )}
+
+      {(columnsA.length > 0 || columnsB.length > 0) && (
+        <section className="surface-card mt-6 rounded-2xl p-5">
+          <h2 className="mb-3 text-lg font-semibold">Validação de campos</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <p className="mb-1 text-sm font-medium muted-text">Colunas somente no A</p>
+              <p className="text-sm muted-text">{columnsOnlyA.join(", ") || "Nenhuma"}</p>
+            </div>
+            <div>
+              <p className="mb-1 text-sm font-medium muted-text">Colunas somente no B</p>
+              <p className="text-sm muted-text">{columnsOnlyB.join(", ") || "Nenhuma"}</p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <p className="mb-2 text-sm font-medium muted-text">Chave de comparação (opcional)</p>
+            <p className="text-sm muted-text">
+              Atual: <span className="font-semibold">{keyColumns.join(" + ") || "por índice (linha)"}</span>
+            </p>
+            <p className="mt-1 text-xs muted-text">
+              Se a ordem dos arquivos for diferente, definir chave melhora muito a coerência.
+            </p>
+          </div>
+        </section>
+      )}
 
       <div className="mt-4 flex flex-wrap gap-3">
         <button

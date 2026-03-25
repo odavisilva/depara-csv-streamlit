@@ -2,6 +2,8 @@ export type DiffStatus = "igual" | "diferente" | "somente_arquivo_a" | "somente_
 
 export type DiffRow = {
   linha: number;
+  chave?: string;
+  camposDiferentes?: string[];
   status: DiffStatus;
   conteudoA: string;
   conteudoB: string;
@@ -22,8 +24,8 @@ export function normalizeRows(rows: string[][]): string[][] {
     .map((row) => row.map((col) => String(col ?? "").trim()));
 }
 
-function rowToText(row: string[]): string {
-  return row.join(" | ");
+function rowToTextByHeader(header: string[], row: Record<string, string>): string {
+  return header.map((h) => `${h}=${row[h] ?? ""}`).join(" | ");
 }
 
 export function compareRows(rowsA: string[][], rowsB: string[][]): DiffRow[] {
@@ -39,8 +41,8 @@ export function compareRows(rowsA: string[][], rowsB: string[][]): DiffRow[] {
       result.push({
         linha: i + 1,
         status: isEqual ? "igual" : "diferente",
-        conteudoA: rowToText(a),
-        conteudoB: rowToText(b)
+        conteudoA: a.join(" | "),
+        conteudoB: b.join(" | ")
       });
       continue;
     }
@@ -49,7 +51,7 @@ export function compareRows(rowsA: string[][], rowsB: string[][]): DiffRow[] {
       result.push({
         linha: i + 1,
         status: "somente_arquivo_a",
-        conteudoA: rowToText(a),
+        conteudoA: a.join(" | "),
         conteudoB: ""
       });
       continue;
@@ -59,11 +61,125 @@ export function compareRows(rowsA: string[][], rowsB: string[][]): DiffRow[] {
       linha: i + 1,
       status: "somente_arquivo_b",
       conteudoA: "",
-      conteudoB: rowToText(b ?? [])
+      conteudoB: (b ?? []).join(" | ")
     });
   }
 
   return result;
+}
+
+export type Table = {
+  header: string[];
+  rows: Record<string, string>[];
+};
+
+function normalizeHeaderCell(value: string): string {
+  return value.trim().replaceAll(/\s+/g, " ");
+}
+
+function normalizeValue(value: string): string {
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "?") return "";
+  // normaliza decimais pt-BR quando vier como texto
+  if (/^-?\d+,\d+$/.test(trimmed)) return trimmed.replace(",", ".");
+  return trimmed;
+}
+
+export function tableFromMatrix(matrix: string[][]): Table {
+  const normalized = normalizeRows(matrix);
+  const headerRow = normalized[0] ?? [];
+  const header = headerRow.map((h) => normalizeHeaderCell(String(h ?? ""))).filter((h) => h !== "");
+
+  const rows = normalized.slice(1).map((row) => {
+    const obj: Record<string, string> = {};
+    for (let i = 0; i < header.length; i += 1) {
+      obj[header[i]] = normalizeValue(row[i] ?? "");
+    }
+    return obj;
+  });
+  return { header, rows };
+}
+
+export function compareTablesByFields(
+  tableA: Table,
+  tableB: Table,
+  keyColumns: string[]
+): { diffs: DiffRow[]; columnsOnlyA: string[]; columnsOnlyB: string[] } {
+  const headerUnion = Array.from(new Set([...tableA.header, ...tableB.header]));
+  const columnsOnlyA = tableA.header.filter((h) => !tableB.header.includes(h));
+  const columnsOnlyB = tableB.header.filter((h) => !tableA.header.includes(h));
+
+  const useKey = keyColumns.length > 0 && keyColumns.every((k) => headerUnion.includes(k));
+  const makeKey = (row: Record<string, string>, index: number) => {
+    if (!useKey) return `__idx__${index}`;
+    return keyColumns.map((k) => `${row[k] ?? ""}`).join("||");
+  };
+
+  const mapA = new Map<string, Record<string, string>>();
+  const mapB = new Map<string, Record<string, string>>();
+  const seenA = new Map<string, number>();
+  const seenB = new Map<string, number>();
+
+  tableA.rows.forEach((row, idx) => {
+    const base = makeKey(row, idx);
+    const count = (seenA.get(base) ?? 0) + 1;
+    seenA.set(base, count);
+    const key = count > 1 ? `${base}__dup__${count}` : base;
+    mapA.set(key, row);
+  });
+  tableB.rows.forEach((row, idx) => {
+    const base = makeKey(row, idx);
+    const count = (seenB.get(base) ?? 0) + 1;
+    seenB.set(base, count);
+    const key = count > 1 ? `${base}__dup__${count}` : base;
+    mapB.set(key, row);
+  });
+
+  const allKeys = Array.from(new Set([...mapA.keys(), ...mapB.keys()]));
+  const diffs: DiffRow[] = allKeys.map((key, i) => {
+    const rowA = mapA.get(key);
+    const rowB = mapB.get(key);
+
+    if (rowA && rowB) {
+      const changed: string[] = [];
+      for (const col of headerUnion) {
+        const a = normalizeValue(rowA[col] ?? "");
+        const b = normalizeValue(rowB[col] ?? "");
+        if (a !== b) changed.push(col);
+      }
+      const status: DiffStatus = changed.length === 0 ? "igual" : "diferente";
+      return {
+        linha: i + 1,
+        chave: useKey ? key : undefined,
+        camposDiferentes: changed,
+        status,
+        conteudoA: rowToTextByHeader(headerUnion, rowA),
+        conteudoB: rowToTextByHeader(headerUnion, rowB)
+      };
+    }
+
+    if (rowA) {
+      return {
+        linha: i + 1,
+        chave: useKey ? key : undefined,
+        camposDiferentes: headerUnion,
+        status: "somente_arquivo_a",
+        conteudoA: rowToTextByHeader(headerUnion, rowA),
+        conteudoB: ""
+      };
+    }
+
+    return {
+      linha: i + 1,
+      chave: useKey ? key : undefined,
+      camposDiferentes: headerUnion,
+      status: "somente_arquivo_b",
+      conteudoA: "",
+      conteudoB: rowToTextByHeader(headerUnion, rowB ?? {})
+    };
+  });
+
+  return { diffs, columnsOnlyA, columnsOnlyB };
 }
 
 export function buildSummary(diffs: DiffRow[]): Summary {
@@ -79,11 +195,13 @@ export function buildSummary(diffs: DiffRow[]): Summary {
 }
 
 export function toCsv(diffs: DiffRow[]): string {
-  const header = "linha,status,conteudoA,conteudoB";
+  const header = "linha,chave,status,camposDiferentes,conteudoA,conteudoB";
   const rows = diffs.map((d) => {
+    const safeKey = `"${String(d.chave ?? "").replaceAll('"', '""')}"`;
+    const safeCampos = `"${(d.camposDiferentes ?? []).join("|").replaceAll('"', '""')}"`;
     const safeA = `"${d.conteudoA.replaceAll('"', '""')}"`;
     const safeB = `"${d.conteudoB.replaceAll('"', '""')}"`;
-    return `${d.linha},${d.status},${safeA},${safeB}`;
+    return `${d.linha},${safeKey},${d.status},${safeCampos},${safeA},${safeB}`;
   });
   return [header, ...rows].join("\n");
 }
