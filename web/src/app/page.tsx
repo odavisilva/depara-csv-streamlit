@@ -100,6 +100,8 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [diffs, setDiffs] = useState<DiffRow[]>([]);
   const [filters, setFilters] = useState<DiffStatus[]>(DEFAULT_FILTERS);
+  const [wbA, setWbA] = useState<WorkbookLike | null>(null);
+  const [wbB, setWbB] = useState<WorkbookLike | null>(null);
   const [sheetsA, setSheetsA] = useState<string[]>([]);
   const [sheetsB, setSheetsB] = useState<string[]>([]);
   const [sheetSelected, setSheetSelected] = useState<string>("");
@@ -115,11 +117,36 @@ export default function Page() {
     if (!filters.length) return [];
     return diffs.filter((diff) => filters.includes(diff.status));
   }, [diffs, filters]);
-  const errorRows = useMemo(
-    () => diffs.filter((row) => row.status !== "igual"),
-    [diffs]
-  );
+  const errorRows = useMemo(() => diffs.filter((row) => row.status !== "igual"), [diffs]);
+  const firstErrorLinha = errorRows[0]?.linha;
+  const [activeErrorIdx, setActiveErrorIdx] = useState<number>(0);
   const csvOutput = useMemo(() => toCsv(filteredRows), [filteredRows]);
+
+  function scrollToLinha(linha: number | undefined) {
+    if (!linha) return;
+    const el = document.getElementById(`linha-${linha}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function recomputeForSheet(nextSheet: string, nextKeyColumns: string[]) {
+    if (!wbA || !wbB) return;
+    const listA = Array.from(wbA.sheets.keys());
+    const listB = Array.from(wbB.sheets.keys());
+    const matrixA = wbA.sheets.get(nextSheet) ?? wbA.sheets.get(listA[0] ?? "") ?? [];
+    const matrixB = wbB.sheets.get(nextSheet) ?? wbB.sheets.get(listB[0] ?? "") ?? [];
+
+    const tableA = tableFromMatrix(matrixA);
+    const tableB = tableFromMatrix(matrixB);
+    setColumnsA(tableA.header);
+    setColumnsB(tableB.header);
+
+    const compared = compareTablesByFields(tableA, tableB, nextKeyColumns);
+    setColumnsOnlyA(compared.columnsOnlyA);
+    setColumnsOnlyB(compared.columnsOnlyB);
+    setDiffs(compared.diffs);
+    setActiveErrorIdx(0);
+  }
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("theme") as Theme | null;
@@ -147,6 +174,8 @@ export default function Page() {
     setColumnsB([]);
     setColumnsOnlyA([]);
     setColumnsOnlyB([]);
+    setWbA(null);
+    setWbB(null);
 
     if (!hasSupportedSuffix(fileA) || !hasSupportedSuffix(fileB)) {
       setError("Envie dois arquivos nos formatos .csv ou .xlsx.");
@@ -155,13 +184,15 @@ export default function Page() {
 
     try {
       setLoading(true);
-      const [wbA, wbB] = await Promise.all([
+      const [nextWbA, nextWbB] = await Promise.all([
         parseFileToWorkbookLike(fileA as File),
         parseFileToWorkbookLike(fileB as File)
       ]);
+      setWbA(nextWbA);
+      setWbB(nextWbB);
 
-      const listA = Array.from(wbA.sheets.keys());
-      const listB = Array.from(wbB.sheets.keys());
+      const listA = Array.from(nextWbA.sheets.keys());
+      const listB = Array.from(nextWbB.sheets.keys());
       setSheetsA(listA);
       setSheetsB(listB);
 
@@ -170,8 +201,8 @@ export default function Page() {
       const defaultSheet = intersection[0] ?? listA[0] ?? "";
       setSheetSelected(defaultSheet);
 
-      const matrixA = wbA.sheets.get(defaultSheet) ?? wbA.sheets.get(listA[0] ?? "") ?? [];
-      const matrixB = wbB.sheets.get(defaultSheet) ?? wbB.sheets.get(listB[0] ?? "") ?? [];
+      const matrixA = nextWbA.sheets.get(defaultSheet) ?? nextWbA.sheets.get(listA[0] ?? "") ?? [];
+      const matrixB = nextWbB.sheets.get(defaultSheet) ?? nextWbB.sheets.get(listB[0] ?? "") ?? [];
 
       const tableA = tableFromMatrix(matrixA);
       const tableB = tableFromMatrix(matrixB);
@@ -187,6 +218,7 @@ export default function Page() {
       setColumnsOnlyA(compared.columnsOnlyA);
       setColumnsOnlyB(compared.columnsOnlyB);
       setDiffs(compared.diffs);
+      setActiveErrorIdx(0);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao comparar os CSVs.";
       setError(message);
@@ -295,11 +327,31 @@ export default function Page() {
               <p className="text-sm muted-text">{sheetsB.join(", ") || "-"}</p>
             </div>
           </div>
-          {!!sheetSelected && (
-            <p className="mt-3 text-sm muted-text">
-              Comparando aba: <span className="font-semibold">{sheetSelected}</span> (por nome quando existir nos dois)
-            </p>
-          )}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <div className="min-w-[240px]">
+              <p className="mb-1 text-sm font-medium muted-text">Aba selecionada</p>
+              <select
+                value={sheetSelected}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSheetSelected(next);
+                  recomputeForSheet(next, keyColumns);
+                }}
+                className="w-full rounded-xl border border-slate-300 bg-white/80 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              >
+                {Array.from(new Set([...sheetsA, ...sheetsB])).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {!!sheetSelected && (
+              <p className="mt-6 text-sm muted-text">
+                Comparando por nome quando existir nos dois.
+              </p>
+            )}
+          </div>
         </section>
       )}
 
@@ -324,6 +376,39 @@ export default function Page() {
             <p className="mt-1 text-xs muted-text">
               Se a ordem dos arquivos for diferente, definir chave melhora muito a coerência.
             </p>
+            {!!columnsA.length && (
+              <div className="mt-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide muted-text">Selecionar chave</p>
+                <div className="flex flex-wrap gap-2">
+                  {columnsA.slice(0, 40).map((col) => {
+                    const selected = keyColumns.includes(col);
+                    return (
+                      <button
+                        key={col}
+                        onClick={() => {
+                          const next = selected ? keyColumns.filter((c) => c !== col) : [...keyColumns, col];
+                          setKeyColumns(next);
+                          recomputeForSheet(sheetSelected || (sheetsA[0] ?? ""), next);
+                        }}
+                        className={`rounded-full px-3 py-1 text-xs transition ${
+                          selected
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                        }`}
+                        type="button"
+                      >
+                        {col}
+                      </button>
+                    );
+                  })}
+                </div>
+                {columnsA.length > 40 && (
+                  <p className="mt-2 text-xs muted-text">
+                    Mostrando 40 primeiras colunas (pra não travar a tela). Se precisar, eu faço busca/pesquisa por nome.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -388,17 +473,60 @@ export default function Page() {
 
       {!!errorRows.length && (
         <section className="surface-card mt-6 rounded-2xl border-red-300/70 bg-red-50/70 p-4 dark:border-red-900 dark:bg-red-950/20">
-          <h2 className="mb-3 text-lg font-semibold text-red-800 dark:text-red-200">Setas para erros</h2>
-          <div className="flex flex-wrap gap-2">
-            {errorRows.map((row) => (
-              <a
+          <h2 className="mb-3 text-lg font-semibold text-red-800 dark:text-red-200">Navegar pelos erros</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveErrorIdx(0);
+                scrollToLinha(firstErrorLinha);
+              }}
+              className="rounded-xl border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
+            >
+              Ir para o 1º erro
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.max(0, activeErrorIdx - 1);
+                setActiveErrorIdx(next);
+                scrollToLinha(errorRows[next]?.linha);
+              }}
+              className="rounded-xl border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
+            >
+              Erro anterior
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const next = Math.min(errorRows.length - 1, activeErrorIdx + 1);
+                setActiveErrorIdx(next);
+                scrollToLinha(errorRows[next]?.linha);
+              }}
+              className="rounded-xl border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
+            >
+              Próximo erro
+            </button>
+            <p className="text-sm muted-text">
+              {activeErrorIdx + 1} de {errorRows.length} erros
+            </p>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {errorRows.slice(0, 20).map((row) => (
+              <button
+                type="button"
                 key={`erro-${row.linha}-${row.status}`}
-                href={`#linha-${row.linha}`}
-                className="rounded-full border border-red-300 bg-white px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
+                onClick={() => scrollToLinha(row.linha)}
+                className="rounded-full border border-red-300 bg-white px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-slate-900 dark:text-red-200 dark:hover:bg-slate-800"
               >
                 {`\u2192 Linha ${row.linha} (${row.status})`}
-              </a>
+              </button>
             ))}
+            {errorRows.length > 20 && (
+              <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-200">
+                +{errorRows.length - 20} (use “Próximo erro”)
+              </span>
+            )}
           </div>
         </section>
       )}

@@ -85,19 +85,80 @@ function normalizeValue(value: string): string {
   return trimmed;
 }
 
-export function tableFromMatrix(matrix: string[][]): Table {
-  const normalized = normalizeRows(matrix);
-  const headerRow = normalized[0] ?? [];
-  const header = headerRow.map((h) => normalizeHeaderCell(String(h ?? ""))).filter((h) => h !== "");
+function isProbablyReportTitleCell(value: string): boolean {
+  const v = normalizeHeaderCell(String(value ?? ""));
+  if (!v) return false;
+  return /relat[oó]rio|estabelecimento|data atendimento|tipo carga|\|\< \>\|/i.test(v);
+}
 
-  const rows = normalized.slice(1).map((row) => {
+function scoreHeaderCandidateRow(row: string[]): number {
+  const cells = row.map((c) => normalizeHeaderCell(String(c ?? "")));
+  const nonEmpty = cells.filter((c) => c !== "");
+  const uniqueNonEmpty = new Set(nonEmpty.map((c) => c.toLowerCase()));
+
+  // linha de título/relatório normalmente tem 1 célula “grandona”
+  const titlePenalty = nonEmpty.some((c) => isProbablyReportTitleCell(c)) ? 8 : 0;
+  const oneCellPenalty = nonEmpty.length <= 1 ? 10 : 0;
+
+  const keywordBonus = nonEmpty.filter((c) => /(^nr_|^cod_|^dt_|^hr_|id$|codigo|seq|sit_|tipo_)/i.test(c))
+    .length;
+
+  // preferir linhas com muitas colunas preenchidas e valores curtos (nomes de campo)
+  const avgLen = nonEmpty.length === 0 ? 999 : nonEmpty.reduce((a, b) => a + b.length, 0) / nonEmpty.length;
+  const longTextPenalty = avgLen > 35 ? 6 : avgLen > 20 ? 2 : 0;
+
+  return (
+    nonEmpty.length * 2 +
+    uniqueNonEmpty.size * 3 +
+    keywordBonus * 4 -
+    titlePenalty -
+    oneCellPenalty -
+    longTextPenalty
+  );
+}
+
+export function tableFromMatrix(matrix: string[][]): Table {
+  const normalized = matrix.map((row) => row.map((c) => String(c ?? "")));
+  const limited = normalized.slice(0, 40);
+
+  // escolher a melhor linha de cabeçalho dentro das primeiras N linhas
+  let bestIdx = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < limited.length; i += 1) {
+    const score = scoreHeaderCandidateRow(limited[i] ?? []);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+
+  // fallback: se nada prestou, usar a primeira linha mesmo
+  const headerRow = (normalized[bestIdx] ?? []).map((h) => normalizeHeaderCell(String(h ?? "")));
+
+  // manter posição das colunas (não filtrar vazios) para não “desalinha” dados
+  const header = headerRow.map((h, idx) => (h === "" ? `__col_${idx + 1}` : h));
+
+  // dados começam após o cabeçalho; remover linhas completamente vazias
+  const dataRows = normalized.slice(bestIdx + 1).filter((r) => r.some((c) => String(c ?? "").trim() !== ""));
+
+  const rows = dataRows.map((row) => {
     const obj: Record<string, string> = {};
     for (let i = 0; i < header.length; i += 1) {
       obj[header[i]] = normalizeValue(row[i] ?? "");
     }
     return obj;
   });
-  return { header, rows };
+
+  // se existir “coluna título” (tipo relatório) como __col_1 mas cabeçalho real tinha um texto grande,
+  // isso ainda não quebra o diff; mas ajuda não poluir a UI removendo colunas com nome de relatório.
+  const cleanedHeader = header.filter((h) => !isProbablyReportTitleCell(h));
+  const cleanedRows = rows.map((r) => {
+    const out: Record<string, string> = {};
+    for (const h of cleanedHeader) out[h] = r[h] ?? "";
+    return out;
+  });
+
+  return { header: cleanedHeader, rows: cleanedRows };
 }
 
 export function compareTablesByFields(
